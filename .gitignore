@@ -1,0 +1,7 @@
+# Local machine state written by install.sh / boot.
+/.profile
+
+# Editor / OS noise
+.DS_Store
+result
+result-*

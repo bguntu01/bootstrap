@@ -1,0 +1,98 @@
+#!/usr/bin/env bash
+# `boot` — thin convenience wrapper around the bootstrap repo.
+# Profile-aware: engineer (nix-darwin) vs staff (Homebrew-only). See `boot help`.
+set -euo pipefail
+
+BOOTSTRAP_DIR="${BOOTSTRAP_DIR:-$HOME/.config/bootstrap}"
+export BOOTSTRAP_DIR
+PROFILE="$(cat "$BOOTSTRAP_DIR/.profile" 2>/dev/null || echo engineer)"
+USERNAME="$(id -un)"
+
+in_repo() { git -C "$BOOTSTRAP_DIR" "$@"; }
+
+pull_upstream() {
+  if in_repo remote | grep -qx upstream; then
+    echo "==> git pull upstream main"
+    in_repo pull --rebase upstream main
+  else
+    echo "!! no 'upstream' remote set; skipping pull (set it with: git -C $BOOTSTRAP_DIR remote add upstream <canonical-url>)"
+  fi
+}
+
+switch() {
+  if [[ "$PROFILE" == "engineer" ]]; then
+    echo "==> darwin-rebuild switch (#$USERNAME)"
+    sudo darwin-rebuild switch --flake "$BOOTSTRAP_DIR#$USERNAME"
+  else
+    echo "==> brew bundle + upgrade"
+    brew bundle --file="$BOOTSTRAP_DIR/staff/Brewfile"
+    brew upgrade
+  fi
+}
+
+cmd="${1:-help}"; shift || true
+case "$cmd" in
+  switch) switch ;;
+  pull)   pull_upstream; switch ;;
+  update)
+    pull_upstream
+    if [[ "$PROFILE" == "engineer" ]]; then
+      echo "==> nix flake update"
+      nix flake update --flake "$BOOTSTRAP_DIR"
+    fi
+    switch
+    ;;
+  pick) "$BOOTSTRAP_DIR/bin/pick" "$PROFILE" ;;
+  add)
+    pkg="${1:-}"; [[ -n "$pkg" ]] || { echo "usage: boot add <homebrew-cask>"; exit 1; }
+    if [[ "$PROFILE" == "engineer" ]]; then
+      userfile="$BOOTSTRAP_DIR/users/$USERNAME.nix"
+      # Insert the cask into the OPTIONAL_CASKS region's list.
+      awk -v pkg="$pkg" '
+        index($0,"BOOT:OPTIONAL_CASKS"){inblock=1}
+        inblock && /homebrew.casks = \[/ && !done {
+          sub(/\[/, "[ \"" pkg "\""); done=1
+        }
+        inblock && index($0,"BOOT:END"){inblock=0}
+        {print}
+      ' "$userfile" > "$userfile.tmp" && mv "$userfile.tmp" "$userfile"
+      echo "Added cask '$pkg' to $userfile"
+    else
+      awk -v pkg="$pkg" '
+        index($0,"BOOT:OPTIONAL"){print; print "cask \"" pkg "\""; next}
+        {print}
+      ' "$BOOTSTRAP_DIR/staff/Brewfile" > "$BOOTSTRAP_DIR/staff/Brewfile.tmp" \
+        && mv "$BOOTSTRAP_DIR/staff/Brewfile.tmp" "$BOOTSTRAP_DIR/staff/Brewfile"
+      echo "Added cask '$pkg' to staff/Brewfile"
+    fi
+    switch
+    ;;
+  doctor)
+    echo "profile:   $PROFILE"
+    echo "repo:      $BOOTSTRAP_DIR"
+    if [[ "$PROFILE" == "engineer" ]]; then
+      command -v nix  >/dev/null && echo "nix:       ok ($(nix --version))" || echo "nix:       MISSING"
+      [[ -f "$BOOTSTRAP_DIR/users/$USERNAME.nix" ]] && echo "overlay:   users/$USERNAME.nix present" || echo "overlay:   MISSING (run install.sh)"
+    fi
+    command -v brew >/dev/null && echo "brew:      ok" || echo "brew:      MISSING"
+    if command -v op >/dev/null; then
+      op account list >/dev/null 2>&1 && echo "1password: signed in" || echo "1password: not signed in (open the app / run 'op signin')"
+    else
+      echo "1password: op CLI MISSING"
+    fi
+    ssh-add -l >/dev/null 2>&1 && echo "ssh agent: key loaded" || echo "ssh agent: no key (enable the 1Password SSH agent)"
+    in_repo remote | grep -qx upstream && echo "upstream:  set" || echo "upstream:  NOT set"
+    ;;
+  help|*)
+    cat <<'EOF'
+boot — bootstrap helper
+
+  boot switch     apply the current config (darwin-rebuild / brew bundle)
+  boot pull       git pull upstream main, then switch
+  boot update     pull upstream + nix flake update, then switch
+  boot pick       choose optional packages (gum checklist)
+  boot add <cask> add a Homebrew cask and switch
+  boot doctor     sanity-check the environment
+EOF
+    ;;
+esac

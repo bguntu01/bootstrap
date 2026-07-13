@@ -1,0 +1,87 @@
+#!/usr/bin/env bash
+# `boot pick` — choose optional packages from packages/optional.list via a gum checklist,
+# then write the selection back into the right place so it stays reproducible:
+#   engineer -> users/<username>.nix  (homebrew.casks + home.packages regions)
+#   staff    -> staff/Brewfile        (optional region)
+set -euo pipefail
+
+BOOTSTRAP_DIR="${BOOTSTRAP_DIR:-$HOME/.config/bootstrap}"
+LIST="$BOOTSTRAP_DIR/packages/optional.list"
+PROFILE="${1:-engineer}"
+
+command -v gum >/dev/null 2>&1 || { echo "gum not found (installed via home/common.nix or Homebrew)"; exit 1; }
+[[ -f "$LIST" ]] || { echo "missing $LIST"; exit 1; }
+
+trim() { local s="$1"; s="${s#"${s%%[![:space:]]*}"}"; s="${s%"${s##*[![:space:]]}"}"; printf '%s' "$s"; }
+
+labels=(); types=(); names=(); preselected=()
+while IFS='|' read -r label type name profiles default; do
+  [[ "$label" =~ ^[[:space:]]*# ]] && continue
+  [[ -z "${label// /}" ]] && continue
+  label="$(trim "$label")"; type="$(trim "$type")"; name="$(trim "$name")"
+  profiles="$(trim "$profiles")"; default="$(trim "$default")"
+  [[ ",$profiles," == *",$PROFILE,"* ]] || continue
+  labels+=("$label"); types+=("$type"); names+=("$name")
+  [[ "$default" == "on" ]] && preselected+=("$label")
+done < "$LIST"
+
+[[ ${#labels[@]} -gt 0 ]] || { echo "No optional packages available for profile '$PROFILE'."; exit 0; }
+
+sel_csv="$(IFS=,; echo "${preselected[*]:-}")"
+echo "Select optional packages (space to toggle, enter to confirm):"
+mapfile -t chosen < <(gum choose --no-limit --selected "$sel_csv" -- "${labels[@]}")
+
+# Resolve chosen labels -> (type,name).
+chosen_casks=(); chosen_nix=(); chosen_brews=()
+for c in "${chosen[@]:-}"; do
+  [[ -z "$c" ]] && continue
+  for i in "${!labels[@]}"; do
+    if [[ "${labels[$i]}" == "$c" ]]; then
+      case "${types[$i]}" in
+        cask) chosen_casks+=("${names[$i]}") ;;
+        brew) chosen_brews+=("${names[$i]}") ;;
+        nix)  chosen_nix+=("${names[$i]}") ;;
+      esac
+      break
+    fi
+  done
+done
+
+# Replace the body between a start marker and the next `BOOT:END`, injecting bodyfile.
+replace_region() {
+  local file="$1" startpat="$2" bodyfile="$3"
+  awk -v startpat="$startpat" -v bodyfile="$bodyfile" '
+    index($0, startpat) { print; while ((getline line < bodyfile) > 0) print line; close(bodyfile); inblock=1; next }
+    inblock && index($0, "BOOT:END") { print; inblock=0; next }
+    inblock { next }
+    { print }
+  ' "$file" > "$file.tmp" && mv "$file.tmp" "$file"
+}
+
+nix_list() { local out=""; for n in "$@"; do out+=" \"$n\""; done; printf '%s' "$out"; }
+
+if [[ "$PROFILE" == "engineer" ]]; then
+  username="$(id -un)"
+  userfile="$BOOTSTRAP_DIR/users/$username.nix"
+  [[ -f "$userfile" ]] || { echo "missing $userfile (run install.sh first)"; exit 1; }
+
+  [[ ${#chosen_brews[@]:-0} -gt 0 ]] && \
+    echo "note: brew-type optional packages (${chosen_brews[*]}) aren't applied for engineers; add them to packages/casks-shared.nix instead." >&2
+
+  tmp_casks="$(mktemp)"; printf '  homebrew.casks = [%s ];\n' "$(nix_list "${chosen_casks[@]:-}")" > "$tmp_casks"
+  tmp_nix="$(mktemp)";   printf '    home.packages = with pkgs; [%s ];\n' "$(nix_list "${chosen_nix[@]:-}")" > "$tmp_nix"
+
+  replace_region "$userfile" "BOOT:OPTIONAL_CASKS" "$tmp_casks"
+  replace_region "$userfile" "BOOT:OPTIONAL_NIX"   "$tmp_nix"
+  rm -f "$tmp_casks" "$tmp_nix"
+
+  echo "Updated $userfile. Run 'boot switch' to apply."
+else
+  brewfile="$BOOTSTRAP_DIR/staff/Brewfile"
+  tmp="$(mktemp)"
+  for n in "${chosen_casks[@]:-}"; do [[ -n "$n" ]] && printf 'cask "%s"\n' "$n" >> "$tmp"; done
+  for n in "${chosen_brews[@]:-}"; do [[ -n "$n" ]] && printf 'brew "%s"\n' "$n" >> "$tmp"; done
+  replace_region "$brewfile" "BOOT:OPTIONAL" "$tmp"
+  rm -f "$tmp"
+  echo "Updated $brewfile. Run 'brew bundle --file=$brewfile' to apply."
+fi

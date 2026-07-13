@@ -1,0 +1,23 @@
+# Pickable optional packages for `boot pick`.
+#
+# Adding a package = one line. Pipe-delimited (kept dependency-free so the bash picker needs
+# no TOML parser). Columns:
+#
+#   label | type | name | profiles | default
+#
+#     label    human name shown in the picker
+#     type     cask | brew | nix   (cask/brew -> Homebrew, nix -> nixpkgs attr)
+#     name     the Homebrew cask/formula name, or the nixpkgs attribute
+#     profiles comma-separated: engineer,staff  (who may pick it)
+#     default  on | off  (preselected in the picker)
+#
+# Lines starting with # and blank lines are ignored.
+
+Spotify            | cask | spotify              | engineer,staff | off
+VS Code            | cask | visual-studio-code   | engineer       | off
+Docker Desktop     | cask | docker               | engineer       | off
+Figma              | cask | figma                | engineer,staff | off
+Notion             | cask | notion               | engineer,staff | off
+Rectangle          | cask | rectangle            | engineer,staff | on
+Zoom               | cask | zoom                 | engineer,staff | on
+httpie             | nix  | httpie               | engineer       | off

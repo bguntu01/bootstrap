@@ -1,0 +1,21 @@
+{
+  "$schema": "https://raw.githubusercontent.com/jetify-com/devbox/main/.schema/devbox.schema.json",
+  "packages": [
+    "nodejs@22",
+    "python@3.12"
+  ],
+  "shell": {
+    "init_hook": [
+      "echo 'devbox shell ready — machine tools come from the bootstrap repo, project tools from here'"
+    ],
+    "scripts": {
+      "test": ["echo 'add your test command'"]
+    }
+  },
+  "//": [
+    "Copy this into a new project, then `direnv allow` so the shell auto-activates.",
+    "Pull secrets from 1Password instead of committing them, e.g.:",
+    "  export DATABASE_URL=$(op read 'op://Eng/my-project/database_url')",
+    "or use a .env with `op inject`:  op inject -i .env.tpl -o .env"
+  ]
+}
