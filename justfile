@@ -42,7 +42,11 @@ check:
 
 # Lint the shell scripts (fast, safe, no VM needed).
 lint:
-    shellcheck install.sh staff/defaults.sh bin/boot bin/pick
+    shellcheck install.sh staff/defaults.sh bin/boot bin/pick bin/onboard
+
+# Unit-test the shell helpers (brew install bats-core).
+test:
+    bats tests
 
 # --- VM testing (Apple Silicon) --------------------------------------------
 # Throwaway macOS VMs via `tart`, so you can exercise the full curl|bash flow
@@ -53,7 +57,7 @@ vm_name  := "bootstrap-test"
 
 # Boot a clean throwaway macOS VM and print the paste-ready installer command.
 # Test your own fork/branch:  just test-vm engineer repo=YOU/bootstrap branch=my-branch
-test-vm profile="engineer" repo="hoptekai/bootstrap" branch="main":
+test-vm profile="engineer" repo="hoptekai/bootstrap" branch="main" noninteractive="1":
     #!/usr/bin/env bash
     set -euo pipefail
     command -v tart >/dev/null 2>&1 || {
@@ -70,14 +74,15 @@ test-vm profile="engineer" repo="hoptekai/bootstrap" branch="main":
     echo "==> Cloning a clean VM: {{vm_name}}"
     tart clone bootstrap-base {{vm_name}}
 
-    # Build the exact command to paste inside the VM. HTTPS everywhere: a fresh
-    # VM has no SSH keys / 1Password agent, so the default git@ URLs would fail.
+    # Build the exact command to paste inside the VM. HTTPS everywhere; the
+    # export must precede the pipeline so bash (not just curl) sees it.
     RAW="https://raw.githubusercontent.com/{{repo}}/{{branch}}/install.sh"
     UPSTREAM="https://github.com/hoptekai/bootstrap.git"
+    ENV="export BOOTSTRAP_NONINTERACTIVE={{noninteractive}};"
     if [ "{{profile}}" = "staff" ]; then
-      CMD="curl -fsSL $RAW | bash -s -- --profile staff --upstream $UPSTREAM"
+      CMD="$ENV curl -fsSL $RAW | bash -s -- --profile staff --upstream $UPSTREAM"
     else
-      CMD="curl -fsSL $RAW | bash -s -- --profile engineer --fork https://github.com/{{repo}}.git --upstream $UPSTREAM"
+      CMD="$ENV curl -fsSL $RAW | bash -s -- --profile engineer --fork https://github.com/{{repo}}.git --upstream $UPSTREAM"
     fi
 
     cat <<EOF
